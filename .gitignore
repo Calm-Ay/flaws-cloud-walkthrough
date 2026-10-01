@@ -1,0 +1,15 @@
+# Never commit AWS credentials or local config
+.aws/
+credentials
+*.pem
+*.key
+.env
+*.secret
+
+# Recovered challenge loot — contains leaked keys + its own .git history
+level3-loot/
+access_keys.txt
+
+# internal
+HANDOFF.md
+build-flaws.png

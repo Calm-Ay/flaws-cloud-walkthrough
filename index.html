@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>flAWS.cloud — AWS Cloud Security Walkthrough | 0xC4LM4Y</title>
+  <meta name="description" content="Full 6-level walkthrough of the flAWS.cloud challenge — public S3 buckets, leaked credentials in git history, public EC2 snapshots, SSRF against the EC2 metadata service, and IAM privilege enumeration into a serverless pivot. Real AWS CLI evidence, root cause, and remediation for each finding."/>
+  <meta property="og:title" content="flAWS.cloud — AWS Cloud Security Walkthrough | 0xC4LM4Y"/>
+  <meta property="og:description" content="Full 6-level walkthrough of the flAWS.cloud challenge — S3 misconfig, leaked git credentials, public EC2 snapshots, SSRF → EC2 metadata credential theft, and IAM enumeration into a serverless pivot. CLI evidence + remediation."/>
+  <meta property="og:url" content="https://calm-ay.github.io/flaws-cloud-walkthrough/"/>
+  <meta property="og:image" content="https://calm-ay.github.io/img/og-card.png"/>
+  <meta name="twitter:card" content="summary_large_image"/>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='%2300d4aa' d='M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z'/></svg>"/>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    *,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
+    :root{--red:#00d4aa;--white:#e6f2ee;--black:#04070a;--card:#0e1417;--gray:#a7b8b3;--border:#1b2830;--green:#3cf0c6;}
+    html{scroll-behavior:smooth;}
+    body{background:var(--black);color:var(--white);font-family:'JetBrains Mono',sans-serif;overflow-x:hidden;}
+    ::-webkit-scrollbar{width:3px;}
+    ::-webkit-scrollbar-track{background:#000;}
+    ::-webkit-scrollbar-thumb{background:var(--red);}
+    nav{position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:18px 50px;background:rgba(0,0,0,0.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);}
+    .nav-logo{display:flex;align-items:center;gap:8px;font-family:'Chakra Petch',sans-serif;font-weight:900;font-size:1.1rem;letter-spacing:3px;color:var(--white);text-decoration:none;}
+    .nav-logo .bolt{color:var(--red);}
+    .nav-back{font-size:0.72rem;letter-spacing:2px;text-transform:uppercase;color:var(--gray);text-decoration:none;font-weight:700;transition:color 0.2s;}
+    .nav-back:hover{color:var(--white);}
+    .wrap{max-width:1100px;margin:0 auto;padding:0 60px;}
+    .label{display:flex;align-items:center;gap:12px;font-size:0.68rem;letter-spacing:3px;color:var(--red);text-transform:uppercase;font-weight:700;margin-bottom:28px;}
+    .label::before{content:'';display:block;width:28px;height:2px;background:var(--red);}
+    .heading{font-family:'Chakra Petch',sans-serif;font-weight:900;font-size:clamp(3rem,7vw,6rem);line-height:0.9;text-transform:uppercase;}
+    .heading .w{color:var(--white);display:block;}
+    .heading .r{color:var(--red);display:block;}
+    .hero{min-height:100vh;display:flex;align-items:center;padding-top:80px;}
+    .hero-divider{width:50px;height:3px;background:var(--red);margin:22px 0;}
+    .hero-sub{color:var(--gray);font-size:0.92rem;line-height:1.75;max-width:620px;margin-top:8px;}
+    .tag-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px;}
+    .tag{font-size:0.58rem;letter-spacing:1.5px;text-transform:uppercase;border:1px solid #2a2a2a;color:var(--gray);padding:3px 10px;border-radius:2px;font-weight:600;}
+    .btn-r{display:inline-flex;align-items:center;gap:8px;background:var(--red);color:#fff;padding:13px 30px;border-radius:3px;font-weight:700;font-size:0.8rem;letter-spacing:2px;text-decoration:none;transition:opacity 0.2s;margin-top:28px;}
+    .btn-r:hover{opacity:0.82;}
+    .section{padding:80px 0;}
+    .stat-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:36px;}
+    .stat{background:#0b1116;border:1px solid var(--border);border-radius:3px;padding:22px;}
+    .stat .v{font-family:'Chakra Petch',sans-serif;font-weight:900;font-size:1.9rem;color:var(--red);line-height:1;}
+    .stat .l{font-size:0.66rem;letter-spacing:1.5px;text-transform:uppercase;color:var(--gray);margin-top:10px;}
+    .area-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:36px;}
+    .area-card{background:#0b1116;border:1px solid var(--border);border-radius:3px;padding:24px;transition:border-color .2s,transform .2s;}
+    .area-card:hover{border-color:#2a3d48;transform:translateY(-3px);}
+    .area-label{font-size:0.6rem;letter-spacing:2px;text-transform:uppercase;color:var(--red);font-weight:700;margin-bottom:10px;}
+    .area-title{font-weight:700;font-size:0.95rem;margin-bottom:6px;}
+    .area-desc{font-size:0.75rem;color:var(--gray);line-height:1.6;}
+    .area-desc code{color:var(--red);font-size:0.72rem;}
+    .pill{display:inline-block;margin-top:12px;font-size:0.58rem;letter-spacing:1.5px;text-transform:uppercase;color:var(--green);border:1px solid rgba(0,212,170,.3);border-radius:20px;padding:2px 10px;font-weight:700;}
+    .doc-row{background:#0b1116;border:1px solid var(--border);border-radius:3px;padding:28px;display:flex;align-items:center;justify-content:space-between;gap:20px;margin-top:36px;}
+    .doc-row:hover{border-color:#2a2a2a;}
+    .doc-title{font-weight:700;font-size:0.95rem;margin-bottom:5px;}
+    .doc-desc{font-size:0.78rem;color:var(--gray);line-height:1.6;max-width:560px;}
+    .doc-dl{display:inline-flex;align-items:center;gap:6px;background:var(--red);color:#fff;padding:10px 20px;border-radius:3px;font-weight:700;font-size:0.72rem;letter-spacing:2px;text-decoration:none;transition:opacity 0.2s;white-space:nowrap;flex-shrink:0;}
+    .doc-dl:hover{opacity:0.82;}
+    .note{font-size:0.72rem;color:#5a6b66;line-height:1.7;margin-top:22px;border-left:2px solid var(--border);padding-left:16px;}
+    .footer{padding:60px 0 40px;border-top:1px solid var(--border);}
+    .footer-name{font-family:'Chakra Petch',sans-serif;font-weight:900;font-size:clamp(3rem,9vw,8rem);text-transform:uppercase;color:transparent;-webkit-text-stroke:1px #05231c;margin-top:40px;line-height:1;user-select:none;overflow:hidden;}
+    .footer-copy{font-size:0.72rem;color:#333;margin-top:16px;padding-bottom:20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;}
+    @media(max-width:768px){
+      nav{padding:12px 24px;flex-wrap:wrap;gap:8px;}
+      .wrap{padding:0 24px;}
+      .hero{padding-top:100px;}
+      .area-grid{grid-template-columns:1fr;}
+      .stat-row{grid-template-columns:repeat(2,1fr);}
+      .doc-row{flex-direction:column;align-items:flex-start;}
+    }
+    html{scroll-behavior:smooth}
+    body{position:relative}
+    body::before{content:"";position:fixed;inset:-50%;z-index:0;pointer-events:none;opacity:.5;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E");animation:grain 8s steps(6) infinite;mix-blend-mode:overlay}
+    body::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:linear-gradient(rgba(0,212,170,.02) 1px,transparent 1px) 0 0/100% 3px;opacity:.5}
+    @keyframes grain{0%{transform:translate(0)}25%{transform:translate(-3%,2%)}50%{transform:translate(2%,-3%)}75%{transform:translate(-2%,-1%)}to{transform:translate(0)}}
+    nav,main,footer,.wrap{position:relative;z-index:1}
+    .hero{position:relative}
+    .hero::before{content:"";position:absolute;inset:0;z-index:-1;background-image:linear-gradient(#111a20 1px,transparent 1px),linear-gradient(90deg,#111a20 1px,transparent 1px);background-size:52px 52px;-webkit-mask-image:radial-gradient(ellipse 70% 65% at 30% 45%,#000,transparent 90%);mask-image:radial-gradient(ellipse 70% 65% at 30% 45%,#000,transparent 90%);opacity:.55}
+    ::selection{background:rgba(0,212,170,.3);color:#fff}
+    .bolt{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--red);box-shadow:0 0 8px var(--red);vertical-align:middle;animation:pulseDot 2s infinite}
+    @keyframes pulseDot{0%,100%{opacity:1}50%{opacity:.5}}
+    .btn-r,.doc-dl{color:#03120d!important;}
+  </style>
+</head>
+<body>
+<nav>
+  <a class="nav-logo" href="https://calm-ay.github.io"><span class="bolt"></span> 0xC4LM4Y</a>
+  <a class="nav-back" href="https://calm-ay.github.io">← Back to Portfolio</a>
+</nav>
+
+<div class="wrap">
+  <section class="hero">
+    <div>
+      <div class="label">SECURITY PROJECT · CLOUD SECURITY</div>
+      <div class="heading">
+        <span class="w">flAWS.cloud</span>
+        <span class="r">Walkthrough</span>
+      </div>
+      <div class="hero-divider"></div>
+      <div class="tag-row">
+        <span class="tag">AWS</span>
+        <span class="tag">S3 MISCONFIG</span>
+        <span class="tag">LEAKED CREDENTIALS</span>
+        <span class="tag">EC2 SNAPSHOTS</span>
+        <span class="tag">SSRF · IMDS</span>
+        <span class="tag">IAM ENUMERATION</span>
+        <span class="tag">LAMBDA · API GATEWAY</span>
+      </div>
+      <p class="hero-sub">A full six-level walkthrough of the flAWS.cloud challenge — an authorized, deliberately vulnerable AWS environment. The attack chain runs from an anonymous public S3 bucket, through credentials leaked in git history and a publicly shared EC2 snapshot, to an SSRF that steals instance-role credentials from the metadata service, and finally IAM privilege enumeration that pivots into a Lambda behind API Gateway. Every finding includes real AWS CLI evidence, root cause, and remediation. All credentials and account identifiers are redacted.</p>
+      <a href="#levels" class="btn-r">VIEW THE ATTACK CHAIN ↓</a>
+    </div>
+  </section>
+</div>
+
+<div class="wrap">
+  <section class="section" style="padding-bottom:0;">
+    <div class="label">AT A GLANCE</div>
+    <div class="stat-row">
+      <div class="stat"><div class="v">6</div><div class="l">Levels analyzed</div></div>
+      <div class="stat"><div class="v">5</div><div class="l">Exploited end-to-end</div></div>
+      <div class="stat"><div class="v">2</div><div class="l">Accounts compromised</div></div>
+      <div class="stat"><div class="v">7</div><div class="l">AWS services abused</div></div>
+    </div>
+  </section>
+</div>
+
+<div class="wrap">
+  <section id="levels" class="section">
+    <div class="label">THE ATTACK CHAIN</div>
+    <div class="area-grid">
+
+      <div class="area-card">
+        <div class="area-label">Level 1 — S3 Public Access</div>
+        <div class="area-title">Anonymous Bucket Listing</div>
+        <div class="area-desc">The target site is itself an S3 bucket. <code>aws s3 ls --no-sign-request</code> enumerated it anonymously, exposing an unlinked <code>secret-*.html</code> file — defeating security-through-obscurity and leaking the next level.</div>
+        <span class="pill">✓ Exploited</span>
+      </div>
+
+      <div class="area-card">
+        <div class="area-label">Level 2 — IAM Group Misconfig</div>
+        <div class="area-title">"Any Authenticated AWS User"</div>
+        <div class="area-desc">Anonymous access was fixed, but the bucket granted the Authenticated Users group — i.e. <em>any</em> AWS account. A brand-new zero-privilege user listed it: anonymous → <code>AccessDenied</code>, signed → success.</div>
+        <span class="pill">✓ Exploited</span>
+      </div>
+
+      <div class="area-card">
+        <div class="area-label">Level 3 — Secrets in Git</div>
+        <div class="area-title">Credentials in Public .git History</div>
+        <div class="area-desc">A public <code>.git</code> directory was recovered with <code>aws s3 sync</code>. Walking its history surfaced an access key "deleted" in a later commit but preserved forever — a cross-account compromise that then enumerated the whole account.</div>
+        <span class="pill">✓ Exploited</span>
+      </div>
+
+      <div class="area-card">
+        <div class="area-label">Level 4 — EC2 / EBS</div>
+        <div class="area-title">Publicly Shared Snapshot</div>
+        <div class="area-desc">An EBS snapshot with <code>createVolumePermission</code> open to all accounts was discovered via <code>describe-snapshots</code>. Documented the clone → attach → mount path to read the server's provisioning secrets.</div>
+        <span class="pill">◼ Recon done · runbook</span>
+      </div>
+
+      <div class="area-card">
+        <div class="area-label">Level 5 — SSRF → Metadata</div>
+        <div class="area-title">Stealing Instance-Role Credentials</div>
+        <div class="area-desc">An open proxy was coerced into fetching <code>169.254.169.254</code> (IMDSv1), handing over the instance role's temporary credentials (<code>ASIA…</code> + session token) — the classic SSRF-to-IMDS cloud breach pattern.</div>
+        <span class="pill">✓ Exploited</span>
+      </div>
+
+      <div class="area-card">
+        <div class="area-label">Level 6 — IAM → Serverless</div>
+        <div class="area-title">Privilege Enumeration & Lambda Pivot</div>
+        <div class="area-desc">An over-permissioned user (<code>SecurityAudit</code> + <code>apigateway:GET</code>) enumerated its own policies, discovered a Lambda and its API Gateway trigger via <code>lambda get-policy</code>, and invoked the endpoint to finish the challenge.</div>
+        <span class="pill">✓ Exploited</span>
+      </div>
+
+    </div>
+  </section>
+</div>
+
+<div class="wrap">
+  <section class="section" style="padding-top:0;">
+    <div class="label">REPORT</div>
+    <div class="doc-row">
+      <div>
+        <div class="doc-title">flAWS.cloud — Full Walkthrough (PDF)</div>
+        <div class="doc-desc">Complete report — every level with concept, step-by-step exploitation and real AWS CLI evidence, root-cause analysis, and mapped remediation. Hacker-styled, print-ready, credentials redacted.</div>
+      </div>
+      <a href="./flAWS-Cloud-Walkthrough.pdf" class="doc-dl" download>DOWNLOAD PDF ↓</a>
+    </div>
+    <div class="doc-row">
+      <div>
+        <div class="doc-title">Full Technical Writeup (README)</div>
+        <div class="doc-desc">The same walkthrough rendered on GitHub — browsable commands, outputs, root cause and remediation for all six levels.</div>
+      </div>
+      <a href="https://github.com/Calm-Ay/flaws-cloud-walkthrough#readme" class="doc-dl" target="_blank" rel="noopener">VIEW ON GITHUB ↗</a>
+    </div>
+    <p class="note">Authorization &amp; legality — flAWS.cloud (by Scott Piper / Summit Route) is a deliberately vulnerable training environment, explicitly built to be attacked and legal to test. Every technique shown was performed against that authorized target only. Never run these against AWS resources you do not own or are not authorized to test.</p>
+  </section>
+</div>
+
+<div class="wrap">
+  <footer class="footer">
+    <div style="display:flex;gap:24px;flex-wrap:wrap;">
+      <a href="https://calm-ay.github.io" style="font-size:0.72rem;letter-spacing:2px;text-transform:uppercase;color:var(--gray);text-decoration:none;font-weight:700;">← Portfolio</a>
+      <a href="https://github.com/Calm-Ay" style="font-size:0.72rem;letter-spacing:2px;text-transform:uppercase;color:var(--gray);text-decoration:none;font-weight:700;">GitHub ↗</a>
+      <a href="https://www.linkedin.com/in/rasaq-ayomide-sec" style="font-size:0.72rem;letter-spacing:2px;text-transform:uppercase;color:var(--gray);text-decoration:none;font-weight:700;">LinkedIn ↗</a>
+    </div>
+    <div class="footer-name">0xC4LM4Y</div>
+    <div class="footer-copy">
+      <span>Rasaq Ayomide · Ethical Hacking &amp; Offensive Security</span>
+      <span>calm-ay.github.io</span>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
